@@ -1,0 +1,69 @@
+version: "3.8"
+
+services:
+  legacy:
+    build: ./services/legacy
+    container_name: legacy
+    ports:
+      - "9000:8000"
+
+  candidate:
+    build: ./services/candidate
+    container_name: candidate
+    ports:
+      - "9001:8000"
+
+  diffy:
+    image: diffy/diffy
+    container_name: diffy
+    ports:
+      - "8888:8888"   # UI
+      - "8880:8880"   # Diffy proxy (recibe mirrored traffic)
+      - "8881:8881"   # Admin/API (stats)
+    command: >
+      -master.primary='legacy:8000'
+      -master.secondary='legacy:8000'
+      -candidate='candidate:8000'
+      -service.protocol='http'
+      -serviceName='Diffy POC'
+      -proxy.port=:8880
+      -admin.port=:8881
+      -http.port=:8888
+      -rootUrl='localhost:8888'
+      -summary.email=''
+    depends_on:
+      - legacy
+      - candidate
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx-dp-sim
+    ports:
+      - "8080:80"     # entrada "cliente"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - legacy
+      - diffy
+
+  runner:
+    image: python:3.11-slim
+    container_name: runner
+    working_dir: /work
+    volumes:
+      - ./scripts:/work/scripts:ro
+    command: >
+      bash -lc "pip install requests && python /work/scripts/load_test.py"
+    depends_on:
+      - nginx
+
+  reporter:
+    image: python:3.11-slim
+    container_name: reporter
+    working_dir: /work
+    volumes:
+      - ./scripts:/work/scripts:ro
+    command: >
+      bash -lc "pip install requests && python /work/scripts/diffy_report.py --host diffy --admin-port 8881"
+    depends_on:
+      - diffy
